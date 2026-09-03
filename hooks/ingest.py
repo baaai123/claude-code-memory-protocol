@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
@@ -129,6 +130,26 @@ def main() -> None:
                 _write_offset(session_id, total)
         except OSError:
             pass
+
+    _signal_backup()
+
+
+def _signal_backup() -> None:
+    """Arm the ccmp-backup daemon (debounced) so an idle session backs up.
+
+    Cloned-instance signal file is shared across agents on this machine:
+    ccmp-backup daemon watches ~/.ccmp-backup/signal. SOLO_MEMORY_BACKUP_SIGNAL
+    is honoured for consistency with the opencode plugin; '0' disables.
+    """
+    env_val = os.environ.get("SOLO_MEMORY_BACKUP_SIGNAL")
+    if env_val == "0":
+        return
+    signal_path = env_val or os.path.join(os.path.expanduser("~"), ".ccmp-backup", "signal")
+    try:
+        with open(signal_path, "a", encoding="utf-8") as f:
+            f.write(datetime.now(UTC).isoformat() + "\n")
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":
