@@ -9,7 +9,8 @@ agent session.
 Env knobs:
   CCMP_SKIP_BOOTSTRAP=1   skip everything
   CCMP_VENV_DIR           venv location (default: <plugin_root>/.venv)
-  CCMP_PYTHON             python interpreter to build venv from (default: python3)
+  CCMP_PYTHON             python interpreter to build venv from
+                          (default: probe python3 / py -3 / python)
   CCMP_SKIP_INSTALL=1     skip pip install
   CCMP_SKIP_MODEL=1       skip model download
   HF_ENDPOINT             huggingface endpoint (hf-mirror.com fallback on failure)
@@ -23,11 +24,12 @@ import sys
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VENV_DIR = os.environ.get("CCMP_VENV_DIR", os.path.join(PLUGIN_ROOT, ".venv"))
-BASE_PYTHON = os.environ.get("CCMP_PYTHON", "python3")
 
 # memory-skill's own download script path resolution at import time points at
 # the installed package; we model under the venv's site-packages default.
 MODEL_ID = "BAAI/bge-large-en-v1.5"
+
+IS_WIN = os.name == "nt"
 
 
 def log(*args) -> None:
@@ -39,8 +41,33 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, text=True, **kw)
 
 
+def base_cmd() -> list[str]:
+    """Interpreter used to create the venv (CCMP_PYTHON overrides probing)."""
+    env = os.environ.get("CCMP_PYTHON", "").strip()
+    if env:
+        return [env]
+    if IS_WIN:
+        for cand in (["py", "-3"], ["python"]):
+            try:
+                r = run(cand + ["-c", "pass"], capture_output=True)
+                if r.returncode == 0:
+                    return cand
+            except Exception:  # noqa: BLE001
+                continue
+        return ["python"]
+    return ["python3"]
+
+
 def venv_python() -> str:
+    if IS_WIN:
+        return os.path.join(VENV_DIR, "Scripts", "python.exe")
     return os.path.join(VENV_DIR, "bin", "python")
+
+
+def onnx_present(model_dir: str) -> bool:
+    return os.path.isfile(os.path.join(model_dir, "model.onnx")) or os.path.isfile(
+        os.path.join(model_dir, "onnx", "model.onnx")
+    )
 
 
 def _venv_usable() -> bool:
@@ -72,7 +99,7 @@ def main() -> None:
         return
 
     log(f"creating venv at {VENV_DIR}")
-    r = run([BASE_PYTHON, "-m", "venv", VENV_DIR])
+    r = run(base_cmd() + ["-m", "venv", VENV_DIR])
     if r.returncode != 0 or not _venv_usable():
         log("venv creation failed (continuing)")
         return
@@ -91,7 +118,8 @@ def _ensure_deps(py: str | None = None) -> None:
         log("skipped install")
         return
     py = py or venv_python()
-    r = run([py, "-m", "pip", "install", "-q", "memory-skill", "starlette", "uvicorn", "mcp>=1.28,<2"])
+    r = run([py, "-m", "pip", "install", "-q",
+             "memory-skill[onnx]", "starlette", "uvicorn", "mcp>=1.28,<2"])
     if r.returncode != 0:
         log("pip install failed (continuing)")
 
@@ -100,7 +128,8 @@ def _ensure_deps_external(py: str) -> None:
     if step("install"):
         log("skipped install")
         return
-    r = run([py, "-m", "pip", "install", "-q", "memory-skill", "starlette", "uvicorn", "mcp>=1.28,<2"])
+    r = run([py, "-m", "pip", "install", "-q",
+             "memory-skill[onnx]", "starlette", "uvicorn", "mcp>=1.28,<2"])
     if r.returncode != 0:
         log("pip install on external python failed (continuing)")
 
@@ -118,30 +147,38 @@ def _ensure_model(py: str) -> None:
         log("model probe failed (continuing)")
         return
     model_dir = probe.stdout.strip()
-    # memory-skill stores the ONNX file under <model_path>/onnx/model.onnx.
-    present = (
-        os.path.exists(os.path.join(model_dir, "onnx", "model.onnx"))
-        if model_dir
-        else False
-    )
-    if present:
+    if onnx_present(model_dir):
         log(f"model present: {model_dir}")
         return
+    log("model missing — installing downloader deps + fetching bge-large-en-v1.5 (~1.3GB)")
+    run([py, "-m", "pip", "install", "-q", "optimum[onnxruntime]", "huggingface_hub"],
+        capture_output=True)
     download = run(
         [py, "-c",
-         f"from huggingface_hub import snapshot_download; "
-         f"snapshot_download(repo_id='{MODEL_ID}', local_dir=r'{model_dir}')"],
+         "import os\n"
+         "from huggingface_hub import snapshot_download\n"
+         f"snapshot_download(repo_id='{MODEL_ID}', local_dir={model_dir!r})"],
         capture_output=True,
     )
     if download.returncode != 0 and os.environ.get("HF_ENDPOINT", "").strip() == "":
         log("model download failed; retrying via hf-mirror.com")
         run(
             [py, "-c",
-             "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; "
-             f"from huggingface_hub import snapshot_download; "
-             f"snapshot_download(repo_id='{MODEL_ID}', local_dir=r'{model_dir}')"],
+             "import os\n"
+             "os.environ['HF_ENDPOINT']='https://hf-mirror.com'\n"
+             "from huggingface_hub import snapshot_download\n"
+             f"snapshot_download(repo_id='{MODEL_ID}', local_dir={model_dir!r})"],
             capture_output=True,
         )
+    if not onnx_present(model_dir):
+        log("converting to ONNX (optimum)...")
+        conv = run(
+            [py, "-m", "optimum.onnxruntime",
+             "--model", model_dir, "--task", "feature-extraction", model_dir],
+            capture_output=True,
+        )
+        if conv.returncode != 0:
+            log("ONNX conversion failed — memory runs DEGRADED (hash-only search)")
 
 
 if __name__ == "__main__":

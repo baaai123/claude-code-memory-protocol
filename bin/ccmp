@@ -33,7 +33,12 @@ PID_FILE = os.environ.get(
 def _daemon_python() -> str:
     if os.environ.get("CCMP_PYTHON"):
         return os.environ["CCMP_PYTHON"]
-    venv_py = os.path.normpath(os.path.join(PLUGIN_ROOT, ".venv", "bin", "python"))
+    venv_py = os.path.normpath(
+        os.path.join(
+            PLUGIN_ROOT, ".venv",
+            "Scripts" if os.name == "nt" else "bin", "python",
+        )
+    )
     if os.path.exists(venv_py):
         return venv_py
     return sys.executable
@@ -53,11 +58,18 @@ def cmd_start() -> None:
         return
     subprocess.run([sys.executable, BOOTSTRAP], check=False)
     py = _daemon_python()
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        )
+    else:
+        kwargs["start_new_session"] = True
     proc = subprocess.Popen(
         [py, DAEMON_PY, "--transport", "http", "--host", HOST, "--port", str(PORT)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        **kwargs,
     )
     os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
     with open(PID_FILE, "w", encoding="utf-8") as f:

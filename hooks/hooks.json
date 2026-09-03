@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gate.py",
-            "args": []
+            "command": "python",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/gate.py"]
           }
         ]
       }
@@ -16,8 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/weave_inject.py",
-            "args": []
+            "command": "python",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/weave_inject.py"]
           }
         ]
       }
@@ -27,8 +27,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ingest.py",
-            "args": []
+            "command": "python",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/ingest.py"]
           }
         ]
       }

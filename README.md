@@ -20,7 +20,7 @@ daemon（常驻 HTTP MCP server）持有 memory-skill 实例与嵌入模型，�
 
 ## 安装
 
-**前置依赖**：Python ≥3.10 与网络（首次引导会建 venv、装 memory-skill、下载 bge-large-en-v1.5 模型 ~1.3GB）。
+**前置依赖**：Python ≥3.11（须能以 `python` 调用，如 Windows python.org 安装时勾选 *Add to PATH*；Linux 需 `python-is-python3` 或别名）、Claude Code ≥ 2.1.139（hook `args` 执行体）与网络。首次引导会建 venv、装 memory-skill、可选下载 bge-large-en-v1.5 模型 ~1.3GB（设 `CCMP_SKIP_MODEL=1` 跳过 → SHA-256 降级）。**原生 Windows 支持**：hooks 以 exec 形式直接 spawn `python`，不依赖 Git Bash/cmd 转义；daemon 由 `bin/ccmp`（纯 Python，跨平台）守护，无需 WSL。
 
 ### Marketplace 方式（推荐）
 
@@ -53,7 +53,7 @@ bin/ccmp stop       # 停止 daemon
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
 | `CCMP_DAEMON_HOST` / `CCMP_DAEMON_PORT` | `127.0.0.1` / `8000` | daemon 监听地址 |
-| `CCMP_PYTHON` | venv → `python3` | daemon 解释器 |
+| `CCMP_PYTHON` | venv → `python` | daemon 解释器 |
 | `CCMP_VENV_DIR` | `<plugin>/.venv` | venv 位置 |
 | `CCMP_SKIP_BOOTSTRAP` | （未设） | `=1` 关闭自动引导 |
 | `CCMP_SKIP_INSTALL` | （未设） | `=1` 跳过 pip install |

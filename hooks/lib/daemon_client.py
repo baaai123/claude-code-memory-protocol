@@ -40,9 +40,8 @@ DAEMON_PYTHON = os.environ.get("CCMP_PYTHON") or sys.executable
 def _resolve_daemon_python() -> str:
     if os.environ.get("CCMP_PYTHON"):
         return os.environ["CCMP_PYTHON"]
-    venv_py = os.path.join(
-        os.path.dirname(_DAEMON_PY), "..", "..", ".venv", "bin", "python"
-    )
+    rel = ["..", "..", ".venv", "Scripts" if os.name == "nt" else "bin", "python"]
+    venv_py = os.path.join(os.path.dirname(_DAEMON_PY), *rel)
     venv_py = os.path.normpath(venv_py)
     if os.path.exists(venv_py):
         return venv_py
@@ -90,11 +89,18 @@ def ensure_daemon() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     try:
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            )
+        else:
+            kwargs["start_new_session"] = True
         subprocess.Popen(
             [_resolve_daemon_python(), _DAEMON_PY, "--transport", "http", "--port", str(DAEMON_PORT)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            **kwargs,
         )
     except OSError:
         return False
