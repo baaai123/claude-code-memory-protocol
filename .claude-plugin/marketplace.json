@@ -1,0 +1,13 @@
+{
+  "name": "claude-code-memory-protocol",
+  "owner": {
+    "name": "baaai123"
+  },
+  "plugins": [
+    {
+      "name": "claude-code-memory-protocol",
+      "source": "./",
+      "description": "Force memory consultation before every tool call, inject cross-session context per turn, auto-ingest finished turns via a local memory-skill daemon."
+    }
+  ]
+}

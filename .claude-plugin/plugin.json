@@ -1,0 +1,8 @@
+{
+  "name": "claude-code-memory-protocol",
+  "description": "Force memory consultation (memory_weave) before every tool call, inject cross-session memory context each turn, and auto-ingest finished turns. Memory backend: a local memory-skill daemon.",
+  "version": "0.1.0",
+  "author": {
+    "name": "baaai123"
+  }
+}

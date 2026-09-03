@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""ccmp bootstrap — ensure daemon deps exist (venv + memory-skill + model).
+
+One-shot setup: hooks call this lazily when the daemon is unreachable, so a
+fresh plugin install works without manual steps. Fail-open by design: every
+failure exits 0 and logs to stderr so a bootstrap hiccup never breaks the
+agent session.
+
+Env knobs:
+  CCMP_SKIP_BOOTSTRAP=1   skip everything
+  CCMP_VENV_DIR           venv location (default: <plugin_root>/.venv)
+  CCMP_PYTHON             python interpreter to build venv from (default: python3)
+  CCMP_SKIP_INSTALL=1     skip pip install
+  CCMP_SKIP_MODEL=1       skip model download
+  HF_ENDPOINT             huggingface endpoint (hf-mirror.com fallback on failure)
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VENV_DIR = os.environ.get("CCMP_VENV_DIR", os.path.join(PLUGIN_ROOT, ".venv"))
+BASE_PYTHON = os.environ.get("CCMP_PYTHON", "python3")
+
+# memory-skill's own download script path resolution at import time points at
+# the installed package; we model under the venv's site-packages default.
+MODEL_ID = "BAAI/bge-large-en-v1.5"
+
+
+def log(*args) -> None:
+    print("[ccmp-bootstrap]", *args, file=sys.stderr, flush=True)
+
+
+def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    log("run:", " ".join(cmd))
+    return subprocess.run(cmd, text=True, **kw)
+
+
+def venv_python() -> str:
+    return os.path.join(VENV_DIR, "bin", "python")
+
+
+def _venv_usable() -> bool:
+    py = venv_python()
+    if not os.path.exists(py):
+        return False
+    probe = run([py, "-c", "import pip"], capture_output=True)
+    return probe.returncode == 0
+
+
+def main() -> None:
+    if os.environ.get("CCMP_SKIP_BOOTSTRAP") == "1":
+        log("skipped (CCMP_SKIP_BOOTSTRAP=1)")
+        return
+
+    # An externally supplied CCMP_PYTHON (e.g. an existing memory-skill venv)
+    # replaces bootstrap's own venv entirely.
+    external = os.environ.get("CCMP_PYTHON", "").strip()
+    if external:
+        log(f"using external CCMP_PYTHON: {external}")
+        _ensure_deps_external(external)
+        _ensure_model(external)
+        return
+
+    if _venv_usable():
+        log(f"venv usable: {VENV_DIR}")
+        _ensure_deps()
+        _ensure_model(venv_python())
+        return
+
+    log(f"creating venv at {VENV_DIR}")
+    r = run([BASE_PYTHON, "-m", "venv", VENV_DIR])
+    if r.returncode != 0 or not _venv_usable():
+        log("venv creation failed (continuing)")
+        return
+
+    _ensure_deps()
+    _ensure_model(venv_python())
+
+
+def step(name: str) -> bool:
+    skip = os.environ.get(f"CCMP_SKIP_{name.upper().replace(' ', '_')}", "")
+    return skip == "1"
+
+
+def _ensure_deps(py: str | None = None) -> None:
+    if step("install"):
+        log("skipped install")
+        return
+    py = py or venv_python()
+    r = run([py, "-m", "pip", "install", "-q", "memory-skill", "starlette", "uvicorn", "mcp>=1.28,<2"])
+    if r.returncode != 0:
+        log("pip install failed (continuing)")
+
+
+def _ensure_deps_external(py: str) -> None:
+    if step("install"):
+        log("skipped install")
+        return
+    r = run([py, "-m", "pip", "install", "-q", "memory-skill", "starlette", "uvicorn", "mcp>=1.28,<2"])
+    if r.returncode != 0:
+        log("pip install on external python failed (continuing)")
+
+
+def _ensure_model(py: str) -> None:
+    if step("model"):
+        log("skipped model")
+        return
+    probe = run(
+        [py, "-c",
+         "import memory_skill.contracts as c; print(c.MemorySkillConfig().model_path)"],
+        capture_output=True,
+    )
+    if probe.returncode != 0:
+        log("model probe failed (continuing)")
+        return
+    model_dir = probe.stdout.strip()
+    # memory-skill stores the ONNX file under <model_path>/onnx/model.onnx.
+    present = (
+        os.path.exists(os.path.join(model_dir, "onnx", "model.onnx"))
+        if model_dir
+        else False
+    )
+    if present:
+        log(f"model present: {model_dir}")
+        return
+    download = run(
+        [py, "-c",
+         f"from huggingface_hub import snapshot_download; "
+         f"snapshot_download(repo_id='{MODEL_ID}', local_dir=r'{model_dir}')"],
+        capture_output=True,
+    )
+    if download.returncode != 0 and os.environ.get("HF_ENDPOINT", "").strip() == "":
+        log("model download failed; retrying via hf-mirror.com")
+        run(
+            [py, "-c",
+             "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; "
+             f"from huggingface_hub import snapshot_download; "
+             f"snapshot_download(repo_id='{MODEL_ID}', local_dir=r'{model_dir}')"],
+            capture_output=True,
+        )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:  # noqa: BLE001 — fail-open contract
+        log("bootstrap crashed (fail-open, continuing):", exc)
+    sys.exit(0)

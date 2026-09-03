@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime data / memory DBs
+data/
+*.db
+*.db_chroma/
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local overrides (hook state, local settings with machine paths)
+.claude/settings.local.json
+
+# Logs
+*.log

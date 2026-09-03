@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""ccmp — daemon lifecycle CLI.
+
+  ccmp start             ensure venv/deps + start daemon (idempotent)
+  ccmp stop              stop the daemon
+  ccmp status            daemon health + memory status
+  ccmp bootstrap         one-shot venv/deps/model setup
+"""
+
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+import sys
+import urllib.request
+
+PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BOOTSTRAP = os.path.join(PLUGIN_ROOT, "bin", "ccmp-bootstrap")
+DAEMON_PY = os.path.join(PLUGIN_ROOT, "daemon", "cli.py")
+
+HOST = os.environ.get("CCMP_DAEMON_HOST", "127.0.0.1")
+PORT = int(os.environ.get("CCMP_DAEMON_PORT", "8000"))
+BASE = f"http://{HOST}:{PORT}"
+
+# PID file next to plugin so a user-level daemon survives project switches.
+PID_FILE = os.environ.get(
+    "CCMP_PID_FILE",
+    os.path.join(os.path.expanduser("~"), ".claude-code-memory-protocol", "daemon.pid"),
+)
+
+
+def _daemon_python() -> str:
+    if os.environ.get("CCMP_PYTHON"):
+        return os.environ["CCMP_PYTHON"]
+    venv_py = os.path.normpath(os.path.join(PLUGIN_ROOT, ".venv", "bin", "python"))
+    if os.path.exists(venv_py):
+        return venv_py
+    return sys.executable
+
+
+def _health() -> bool:
+    try:
+        with urllib.request.urlopen(BASE + "/health", timeout=1.5):
+            return True
+    except Exception:
+        return False
+
+
+def cmd_start() -> None:
+    if _health():
+        print("daemon already running")
+        return
+    subprocess.run([sys.executable, BOOTSTRAP], check=False)
+    py = _daemon_python()
+    proc = subprocess.Popen(
+        [py, DAEMON_PY, "--transport", "http", "--host", HOST, "--port", str(PORT)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    with open(PID_FILE, "w", encoding="utf-8") as f:
+        f.write(str(proc.pid))
+    import time
+
+    for _ in range(12):
+        time.sleep(0.5)
+        if _health():
+            print(f"daemon started (pid {proc.pid}) on {BASE}")
+            return
+    print("daemon failed to become healthy; check logs", file=sys.stderr)
+
+
+def cmd_stop() -> None:
+    if not os.path.exists(PID_FILE):
+        print("no pid file; nothing to stop")
+        return
+    with open(PID_FILE, encoding="utf-8") as f:
+        pid = int(f.read().strip())
+    try:
+        os.kill(pid, signal.SIGTERM)
+        print(f"stopped daemon (pid {pid})")
+    except ProcessLookupError:
+        print("process already gone")
+    try:
+        os.remove(PID_FILE)
+    except OSError:
+        pass
+
+
+def cmd_status() -> None:
+    if not _health():
+        print("daemon: DOWN")
+        return
+    print("daemon: UP")
+    try:
+        with urllib.request.urlopen(BASE + "/status", timeout=5) as resp:
+            import json
+
+            data = json.loads(resp.read().decode("utf-8"))
+        print(f"  memory: {data.get('status')} | model: {data.get('model_ok')}")
+        print(f"  learned entries: {data.get('learned_store', {}).get('entry_count')}")
+    except Exception as exc:
+        print(f"  status endpoint error: {exc}")
+
+
+def cmd_bootstrap() -> None:
+    subprocess.run([sys.executable, BOOTSTRAP], check=False)
+
+
+def main() -> None:
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    handlers = {
+        "start": cmd_start,
+        "stop": cmd_stop,
+        "status": cmd_status,
+        "bootstrap": cmd_bootstrap,
+    }
+    handler = handlers.get(cmd)
+    if handler is None:
+        print(__doc__)
+        sys.exit(1)
+    handler()
+
+
+if __name__ == "__main__":
+    main()
