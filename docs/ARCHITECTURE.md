@@ -37,7 +37,7 @@ memory-skill 的 `mcp_server.py` 当前是**纯 stdio + 无状态**：每个连�
 ```
                      ┌─────────────────────────────────────┐
                      │  claude-code-memory-protocol daemon  │
-Claude Code session ─┤  (python -m ccmp.daemon --port 8765) │
+Claude Code session ─┤  (python -m ccmp.daemon --port 8000) │
   UserPromptSubmit ──┤  ├─ MemorySkill (单实例, embedder 常驻)│
   PreToolUse ────────┤  ├─ HTTP/SSE MCP endpoint            │
   Stop ──────────────┤  └─ /weave /ingest /search ...       │
@@ -50,7 +50,7 @@ Claude Code session ─┤  (python -m ccmp.daemon --port 8765) │
 
 ### 2.3 daemon 生命周期
 
-- 启动：`ccmp daemon start`（检测已在运行则跳过）→ 预热 embedder → 监听 127.0.0.1:8765
+- 启动：`ccmp daemon start`（检测已在运行则跳过）→ 预热 embedder → 监听 127.0.0.1:8000
 - hooks 每次调用前 ping `/health`，未运行则自动拉起（lock 文件防竞态）
 - 退出：空闲超时或 `ccmp daemon stop`
 
@@ -60,7 +60,7 @@ Claude Code session ─┤  (python -m ccmp.daemon --port 8765) │
 # ~/.claude-code-memory-protocol/config.yml
 daemon:
   host: 127.0.0.1
-  port: 8765
+  port: 8000
   idle_timeout_min: 60
 memory:
   db_path: ~/.claude-code-memory-protocol/memory.db   # 默认独立库，可指向共享库
@@ -165,7 +165,7 @@ protocol:
   "mcpServers": {
     "opencode_memory": {
       "type": "http",
-      "url": "http://127.0.0.1:8765/mcp"
+      "url": "http://127.0.0.1:8000/mcp"
     }
   }
 }
